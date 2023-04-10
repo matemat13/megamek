@@ -23,6 +23,9 @@ out/
 settings_local.gradle
 properties_local.gradle
 
+# Vim swap files
+*.swp
+
 # Build directories
 build/
 .gradle/

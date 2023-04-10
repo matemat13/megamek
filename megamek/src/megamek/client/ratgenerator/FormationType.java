@@ -236,7 +236,7 @@ public class FormationType {
             int networkMask, boolean bestEffort) {
         return generateFormation(params, numUnits, networkMask, bestEffort, -1, -1);
     }
-    
+
     public List<MechSummary> generateFormation(List<UnitTable.Parameters> params, List<Integer> numUnits,
             int networkMask, boolean bestEffort, int groupSize, int nGroups) {
         if (params.size() != numUnits.size() || params.isEmpty()) {
@@ -268,6 +268,7 @@ public class FormationType {
             p.setWeightClasses(p.getUnitType() < UnitType.CONV_FIGHTER ? wcs : airWcs);
         });
         List<UnitTable> tables = params.stream().map(UnitTable::findTable).collect(Collectors.toList());
+
         //If there are any parameter sets that cannot generate a table, return an empty list. 
         if (!tables.stream().allMatch(UnitTable::hasUnits) && !bestEffort) {
             return new ArrayList<>();
@@ -697,6 +698,88 @@ public class FormationType {
 
         List<MechSummary> onRole = tryIdealRole(params, numUnits);
         return (onRole == null) ? new ArrayList<>() : onRole;
+    }
+    
+    public List<MechSummary> listFormationMechs(UnitTable.Parameters params, List<MechSummary> selectedUnits, int unitSize) {
+        List<UnitTable.Parameters> p = new ArrayList<>();
+        p.add(params);
+        return listFormationMechs(p, selectedUnits, unitSize);
+    }
+
+    public List<MechSummary> listFormationMechs(List<UnitTable.Parameters> params, List<MechSummary> selectedUnits, int unitSize) {
+        if (params.isEmpty()) {
+            throw new IllegalArgumentException("Formation parameter list cannot be empty.");
+        }
+        
+        List<Integer> wcs = IntStream.rangeClosed(minWeightClass,
+                Math.min(maxWeightClass, EntityWeightClass.WEIGHT_SUPER_HEAVY))
+                .boxed()
+                .collect(Collectors.toList());
+        List<Integer> airWcs = wcs.stream().filter(wc -> wc < EntityWeightClass.WEIGHT_ASSAULT)
+                .collect(Collectors.toList()); 
+        params.forEach(p -> {
+            p.getRoles().addAll(missionRoles);
+            p.setWeightClasses(p.getUnitType() < UnitType.CONV_FIGHTER ? wcs : airWcs);
+        });
+        List<UnitTable> tables = params.stream().map(UnitTable::findTable).collect(Collectors.toList());
+
+        int[] mechsFulfillingCriteria = new int[otherCriteria.size()];
+        for (int it = 0; it < otherCriteria.size(); it++)
+        {
+          mechsFulfillingCriteria[it] = 0;
+          for (MechSummary mech : selectedUnits)
+          {
+            if (otherCriteria.get(it).matches(mech))
+              mechsFulfillingCriteria[it] += 1;
+          }
+        }
+
+        boolean canFormationBuildIdealRole = true;
+        for (MechSummary mech : selectedUnits)
+        {
+          if (!isIdealRole(mech))
+          {
+            canFormationBuildIdealRole = false;
+            break;
+          }
+        }
+
+        List<MechSummary> tentativeFormation = new ArrayList<MechSummary>(selectedUnits);
+        List<MechSummary> allMechs = new ArrayList<MechSummary>();
+        for (UnitTable table : tables)
+        {
+          for (int i = 0; i < table.getNumEntries(); i++)
+          {
+            MechSummary curMech = table.getMechSummary(i);
+
+            boolean allApplies = true;
+            allApplies = allApplies && mainCriteria.test(curMech);
+            for (int critIt = 0; critIt < otherCriteria.size(); critIt++)
+            {
+              Constraint criterion = otherCriteria.get(critIt);
+              int mechsToFulfillCriterion = Math.max(criterion.getMinimum(unitSize) - mechsFulfillingCriteria[critIt], 0);
+              int mechsRemainingForSelection = unitSize - selectedUnits.size();
+              if (mechsRemainingForSelection <= mechsToFulfillCriterion)
+                allApplies = allApplies && criterion.matches(curMech);
+            }
+
+            boolean canMechBuildIdealRole = canFormationBuildIdealRole && isIdealRole(curMech);
+            if (allApplies || canMechBuildIdealRole)
+              allMechs.add(curMech);
+
+            // tentativeFormation.add(curMech);
+            // if (qualifies(tentativeFormation))
+            //   allMechs.add(curMech);
+            // tentativeFormation.remove(tentativeFormation.size() - 1);
+          }
+        }
+
+        return allMechs;
+    }
+
+    private boolean isIdealRole(MechSummary ms)
+    {
+      return UnitRoleHandler.getRoleFor(ms).equals(idealRole);
     }
     
     private Predicate<MechSummary> getFilterFromIndex(int index, int slaveType, int masterType) {

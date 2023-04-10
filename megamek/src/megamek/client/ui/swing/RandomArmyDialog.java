@@ -58,6 +58,7 @@ public class RandomArmyDialog extends JDialog implements ActionListener, TreeSel
     private static final int TAB_RAT_GENERATOR     = 2;
     private static final int TAB_FORMATION_BUILDER = 3;
     private static final int TAB_FORCE_GENERATOR   = 4;
+    private static final int TAB_DETFORMATION_BUILDER   = 5;
     
     private static final String CARD_PREVIEW = "card_preview";
     private static final String CARD_FORCE_TREE = "card_force_tree";
@@ -78,10 +79,12 @@ public class RandomArmyDialog extends JDialog implements ActionListener, TreeSel
     private JPanel m_pRAT = new JPanel();
     private JPanel m_pRATGen = new JPanel();
     private JPanel m_pFormations = new JPanel();
+    private JPanel m_pDetFormations = new JPanel();
     private ForceGeneratorViewUi m_pForceGen;
     private ForceGenerationOptionsPanel m_pRATGenOptions;
     private JPanel m_pUnitTypeOptions = new JPanel(new CardLayout());
     private ForceGenerationOptionsPanel m_pFormationOptions;
+    private ForceGenerationOptionsPanel m_pDetFormationOptions;
     private JPanel m_pParameters = new JPanel();
     private JPanel m_pPreview = new JPanel();
     private JPanel m_pButtons = new JPanel();
@@ -190,6 +193,7 @@ public class RandomArmyDialog extends JDialog implements ActionListener, TreeSel
         createRATPanel();
         createRATGenPanel();
         createFormationPanel();
+        createDetFormationPanel();
 
         createPreviewPanel();
         m_pForceGen = new ForceGeneratorViewUi(cl);
@@ -199,6 +203,7 @@ public class RandomArmyDialog extends JDialog implements ActionListener, TreeSel
         m_pMain.addTab(Messages.getString("RandomArmyDialog.RATGentab"), m_pRATGen);
         m_pMain.addTab(Messages.getString("RandomArmyDialog.Formationtab"), m_pFormations);
         m_pMain.addTab(Messages.getString("RandomArmyDialog.Forcetab"), m_pForceGen.getLeftPanel());
+        m_pMain.addTab("Deterministic Formation Builder", m_pDetFormations);
         m_pMain.addChangeListener(ev -> {
             if (m_pMain.getSelectedIndex() == TAB_FORCE_GENERATOR) {
                 m_lRightCards.show(m_pRightPane, CARD_FORCE_TREE);
@@ -520,6 +525,15 @@ public class RandomArmyDialog extends JDialog implements ActionListener, TreeSel
         m_pFormations.add(new JScrollPane(m_pFormationOptions), BorderLayout.CENTER);
     }
 
+    private void createDetFormationPanel() {
+        GameOptions gameOptions = m_client.getGame().getOptions();
+        // formation builder tab
+        m_pDetFormationOptions = new ForceGenerationOptionsPanel(ForceGenerationOptionsPanel.Use.FORMATION_BUILDER);
+        m_pDetFormationOptions.setYear(gameOptions.intOption("year"));
+        m_pDetFormations.setLayout(new BorderLayout());
+        m_pDetFormations.add(new JScrollPane(m_pDetFormationOptions), BorderLayout.CENTER);
+    }
+
     private void createPreviewPanel() {
         // construct the preview panel
         unitsModel = new UnitTableModel();
@@ -719,6 +733,11 @@ public class RandomArmyDialog extends JDialog implements ActionListener, TreeSel
                 MechSummary m = unitsModel.getUnitAt(sel);
                 armyModel.addUnit(m);
             }
+            if (m_pMain.getSelectedIndex() == TAB_DETFORMATION_BUILDER)
+            {
+              // if (validateFormation())
+                updateFormationList();
+            }
 
             m_lArmyBVTotal.setText(msg_bvtotal + calculateTotal(m_lArmy, 1));
         } else if (ev.getSource().equals(m_bAdvSearch)) {
@@ -744,6 +763,8 @@ public class RandomArmyDialog extends JDialog implements ActionListener, TreeSel
                     }
                     //generateUnits removes salvage entries that have no units meeting criteria
                     ratModel.refreshData();
+                } else if (m_pMain.getSelectedIndex() == TAB_DETFORMATION_BUILDER) {
+                  updateFormationList();
                 } else if (m_pMain.getSelectedIndex() == TAB_FORMATION_BUILDER) {
                     ArrayList<MechSummary> unitList = new ArrayList<>();
                     FactionRecord fRec = m_pFormationOptions.getFaction();
@@ -910,6 +931,62 @@ public class RandomArmyDialog extends JDialog implements ActionListener, TreeSel
         }
     }
 
+    private void updateFormationList()
+    {
+      ArrayList<MechSummary> unitList = new ArrayList<>();
+      FactionRecord fRec = m_pDetFormationOptions.getFaction();
+      FormationType ft = FormationType.getFormationType(m_pDetFormationOptions.getStringOption("formationType"));
+      if (ft == null)
+      {
+        unitsModel.setData(unitList);
+        m_pDetFormationOptions.updateGeneratedUnits(unitList);
+        LogManager.getLogger().error("Could not find formation type " + m_pDetFormationOptions.getStringOption("formationType"));
+        return;
+      }
+
+      List<UnitTable.Parameters> params = new ArrayList<>();
+      params.add(new UnitTable.Parameters(fRec,
+              m_pDetFormationOptions.getUnitType(),
+              m_pDetFormationOptions.getYear(),
+              m_pDetFormationOptions.getRating(), null,
+              ModelRecord.NETWORK_NONE,
+              EnumSet.noneOf(EntityMovementMode.class),
+              EnumSet.noneOf(MissionRole.class), 0, fRec));
+      int numUnits = m_pDetFormationOptions.getNumUnits();
+      
+      unitList.addAll(ft.listFormationMechs(params, armyModel.getAllUnits(), numUnits));
+      if (!unitList.isEmpty() && (m_pDetFormationOptions.getIntegerOption("numOtherUnits") > 0)) {
+          if (m_pDetFormationOptions.getBooleanOption("mechBA")) {
+              // Try to generate the BA portion using the same formation type as
+              // the parent, otherwise generate randomly.
+              Parameters p = new Parameters(fRec, UnitType.BATTLE_ARMOR,
+                      m_pDetFormationOptions.getYear(), m_pDetFormationOptions.getRating(), null,
+                      ModelRecord.NETWORK_NONE,
+                      EnumSet.noneOf(EntityMovementMode.class),
+                      EnumSet.of(MissionRole.MECHANIZED_BA), 0, fRec);
+              List<MechSummary> ba = ft.listFormationMechs(p, armyModel.getAllUnits(), numUnits);
+              if (ba.isEmpty()) {
+                  ba = UnitTable.findTable(p).generateUnits(m_pDetFormationOptions.getIntegerOption("numOtherUnits"));
+              }
+              unitList.addAll(ba);
+          } else if (m_pDetFormationOptions.getBooleanOption("airLance")) {
+              UnitTable t = UnitTable.findTable(fRec, UnitType.AERO,
+                      m_pDetFormationOptions.getYear(), m_pDetFormationOptions.getRating(), null,
+                      ModelRecord.NETWORK_NONE,
+                      EnumSet.noneOf(EntityMovementMode.class),
+                      EnumSet.noneOf(MissionRole.class), 0, fRec);
+              MechSummary unit = t.generateUnit();
+              if (unit != null) {
+                  unitList.add(unit);
+                  MechSummary unit2 = t.generateUnit(ms -> ms.getChassis().equals(unit.getChassis()));
+                  unitList.add(Objects.requireNonNullElse(unit2, unit));
+              }
+          }
+      }
+      unitsModel.setData(unitList);
+      m_pDetFormationOptions.updateGeneratedUnits(unitList);
+    }
+
     WindowListener windowListener = new WindowAdapter() {
         @Override
         public void windowClosed(WindowEvent evt) {
@@ -1004,6 +1081,7 @@ public class RandomArmyDialog extends JDialog implements ActionListener, TreeSel
         int gameYear = gameOptions.intOption("year");
         m_pRATGenOptions.setYear(gameYear);
         m_pFormationOptions.setYear(gameYear);
+        m_pDetFormationOptions.setYear(gameYear);
         m_pForceGen.setYear(gameYear);
     }
 
